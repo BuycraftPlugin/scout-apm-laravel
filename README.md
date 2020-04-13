@@ -5,6 +5,26 @@
 Monitor the performance of PHP Laravel applications with Scout's PHP APM Agent.
 Detailed performance metrics and transaction traces are collected once the scout-apm package is installed and configured.
 
+## Important: Lumen
+To get this working with Lumen, there are a couple of changes you need to make:
+
+* Ensure `$app->register(App\Providers\EventServiceProvider::class);` is registered in app.php
+* Add `$app->register(\Scoutapm\Laravel\Providers\ScoutApmServiceProvider::class);` as the final registered provider in app.php
+* Add the following middleware to the global middleware in app.php:
+```php
+$app->middleware([
+    //These should be the first 3 middlewares in the array
+    SendRequestToScout::class,
+    IgnoredEndpoints::class,
+    MiddlewareInstrument::class,
+
+    //Any other middleware here....
+
+    //Finally, this middleware
+    ActionInstrument::class
+]);
+```
+
 ## Requirements
 
 * PHP Version: PHP 7.1+

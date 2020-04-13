@@ -8,27 +8,24 @@ use Illuminate\Cache\CacheManager;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Foundation\Application;
-use Illuminate\Contracts\Http\Kernel as HttpKernelInterface;
+use Illuminate\Database\Capsule\Manager;
+use Laravel\Lumen\Application;
 use Illuminate\Contracts\View\Engine;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Foundation\Http\Kernel as HttpKernelImplementation;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\View\Engines\CompilerEngine;
 use Illuminate\View\Engines\EngineResolver;
 use Illuminate\View\Factory as ViewFactory;
 use Scoutapm\Agent;
 use Scoutapm\Config;
 use Scoutapm\Config\ConfigKey;
-use Scoutapm\Laravel\Database\QueryListener;
-use Scoutapm\Laravel\Middleware\ActionInstrument;
-use Scoutapm\Laravel\Middleware\IgnoredEndpoints;
-use Scoutapm\Laravel\Middleware\MiddlewareInstrument;
-use Scoutapm\Laravel\Middleware\SendRequestToScout;
+use Scoutapm\Laravel\Listeners\QueryExecutedListener;
 use Scoutapm\Laravel\Queue\JobQueueListener;
+use Scoutapm\Laravel\View\Engine\ScoutViewCompilerEngineDecorator;
 use Scoutapm\Laravel\View\Engine\ScoutViewEngineDecorator;
 use Scoutapm\Logger\FilteredLogLevelDecorator;
 use Scoutapm\ScoutApmAgent;
@@ -66,7 +63,7 @@ final class ScoutApmServiceProvider extends ServiceProvider
                     )
                 )),
                 [
-                    ConfigKey::FRAMEWORK => 'Laravel',
+                    ConfigKey::FRAMEWORK => 'Lumen',
                     ConfigKey::FRAMEWORK_VERSION => $this->app->version(),
                 ]
             ));
@@ -127,17 +124,14 @@ final class ScoutApmServiceProvider extends ServiceProvider
     public function boot(
         Application $application,
         ScoutApmAgent $agent,
-        FilteredLogLevelDecorator $log,
-        Connection $connection
+        FilteredLogLevelDecorator $log
     ) : void {
         $log->debug('Agent is starting');
 
-        $this->publishes([
-            __DIR__ . '/../../config/scout_apm.php' => config_path('scout_apm.php'),
-        ]);
+        //For some reason, typehinting the connection seems to suck
+        $connection = app('db')->connection();
 
         $runningInConsole = $application->runningInConsole();
-
         $this->instrumentDatabaseQueries($agent, $connection);
 
         if ($agent->shouldInstrument(self::INSTRUMENT_LARAVEL_QUEUES)) {
@@ -147,32 +141,15 @@ final class ScoutApmServiceProvider extends ServiceProvider
         if ($runningInConsole) {
             return;
         }
-
-        $httpKernel = $application->make(HttpKernelInterface::class);
-        $this->instrumentMiddleware($httpKernel);
-    }
-
-    /**
-     * @param HttpKernelImplementation $kernel
-     *
-     * @noinspection PhpDocSignatureInspection
-     */
-    private function instrumentMiddleware(HttpKernelInterface $kernel) : void
-    {
-        $kernel->prependMiddleware(MiddlewareInstrument::class);
-        $kernel->pushMiddleware(ActionInstrument::class);
-
-        // Must be outside any other scout instruments. When this middleware's terminate is called, it will complete
-        // the request, and send it to the CoreAgent.
-        $kernel->prependMiddleware(IgnoredEndpoints::class);
-        $kernel->prependMiddleware(SendRequestToScout::class);
     }
 
     private function instrumentDatabaseQueries(ScoutApmAgent $agent, Connection $connection) : void
     {
-        $connection->listen(static function (QueryExecuted $query) use ($agent) : void {
-            (new QueryListener($agent))->__invoke($query);
-        });
+        /**
+         * @var Dispatcher $events
+         */
+        $events = app('events');
+        $events->listen(QueryExecuted::class, QueryExecutedListener::class);
     }
 
     private function instrumentQueues(ScoutApmAgent $agent, Dispatcher $eventDispatcher, bool $runningInConsole) : void

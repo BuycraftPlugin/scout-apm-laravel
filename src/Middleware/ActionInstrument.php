@@ -6,8 +6,7 @@ namespace Scoutapm\Laravel\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Routing\Route;
-use Illuminate\Routing\Router;
+use Laravel\Lumen\Routing\Router;
 use Scoutapm\Events\Span\Span;
 use Scoutapm\Logger\FilteredLogLevelDecorator;
 use Scoutapm\ScoutApmAgent;
@@ -51,7 +50,7 @@ final class ActionInstrument
                     throw $e;
                 }
 
-                $span->updateName($this->automaticallyDetermineControllerName());
+                $span->updateName($this->automaticallyDetermineControllerName($request));
 
                 return $response;
             }
@@ -59,18 +58,29 @@ final class ActionInstrument
     }
 
     /**
-     * Get the name of the controller span from the controller name if possible, but fall back on the uri if no
-     * controller was found.
+     * Lumen uses a different router, so...
      */
-    private function automaticallyDetermineControllerName() : string
+    private function automaticallyDetermineControllerName(Request $request) : string
     {
         $name = 'unknown';
 
         try {
-            /** @var Route|null $route */
-            $route = $this->router->current();
-            if ($route !== null) {
-                $name = $route->action['controller'] ?? $route->uri();
+            $router = $this->router;
+            $method = $request->getMethod();
+            $pathInfo = $request->getPathInfo();
+
+            $routes = $router->getRoutes();
+
+            $matchedRoute = null;
+            foreach ($routes as $route => $data) {
+                $route = preg_replace("%\{.*?\}%", "([^/]+?)", $route);
+                if (preg_match("%^{$route}$%", $method.$pathInfo)) {
+                    $matchedRoute = $data;
+                    break;
+                }
+            }
+            if ($matchedRoute !== null) {
+                $name = $matchedRoute['action']['as'] ?? $matchedRoute['action']['uses'];
             }
         } catch (Throwable $e) {
             $this->logger->debug(
