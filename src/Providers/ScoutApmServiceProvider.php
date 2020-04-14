@@ -160,12 +160,20 @@ final class ScoutApmServiceProvider extends ServiceProvider
             __DIR__ . '/../../config/scout_apm.php' => config_path('scout_apm.php'),
         ]);
 
-        $runningInConsole = $application->runningInConsole();
+        $instrumentQueries = false;
 
-        $this->instrumentDatabaseQueries($agent, $connection);
+        $runningInConsole = $application->runningInConsole();
+        if (!$runningInConsole) {
+            $instrumentQueries = true;
+        }
 
         if ($agent->shouldInstrument(self::INSTRUMENT_LARAVEL_QUEUES)) {
+            $instrumentQueries = true;
             $this->instrumentQueues($agent, $application->make('events'), $runningInConsole);
+        }
+
+        if ($instrumentQueries) {
+            $this->instrumentDatabaseQueries($agent, $connection);
         }
 
         if ($runningInConsole) {
